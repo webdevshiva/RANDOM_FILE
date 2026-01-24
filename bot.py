@@ -15,44 +15,22 @@ from telegram.ext import (
     filters
 )
 
-# ================= CONFIGURATION =================
-BOT_TOKEN = "8198318399:AAEK3qvRpSr6EqKldxBXnlDfcsjhUdWPPhU"
-MONGO_URI = "mongodb+srv://baleny:zpQKH66B4AaYldIx@cluster0.ichdp1p.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
-
-if not BOT_TOKEN:
-    print("❌ ERROR: BOT_TOKEN not set!")
-    exit(1)
-
-# ================= DATABASE SETUP =================
-# MongoDB Atlas connection with proper configuration
-client = AsyncIOMotorClient(
-    MONGO_URI,
-    tls=True,  # Enable TLS/SSL for Atlas
-    tlsAllowInvalidCertificates=False,  # For security
-    connectTimeoutMS=30000,
-    socketTimeoutMS=30000,
-    serverSelectionTimeoutMS=30000
+# ================= LOGGING SETUP =================
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
 )
+logger = logging.getLogger(__name__)
 
-# Database and collections
-db = client["telegram_bot_db"]
-users_col = db["users"]
-media_col = db["media"]
+# ================= CONFIGURATION =================
+# Environment variables से configuration लें
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8198318399:AAEK3qvRpSr6EqKldxBXnlDfcsjhUdWPPhU")
+MONGO_URI = os.getenv("MONGO_URI", "mongodb+srv://baleny:zpQKH66B4AaYldIx@cluster0.ichdp1p.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0")
+LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID", "-1002686058050"))
 
-# Test connection
-async def test_mongodb_connection():
-    try:
-        await client.admin.command('ping')
-        print("✅ MongoDB Connection Successful!")
-        # Create indexes for better performance
-        await users_col.create_index("_id")
-        await users_col.create_index("plan")
-        await users_col.create_index("expires")
-        await media_col.create_index("channel_id")
-        print("✅ Database indexes created!")
-    except Exception as e:
-        print(f"❌ MongoDB Connection Failed: {e}")
-        exit(1)
+# Admin IDs को environment variable से parse करें
+ADMINS_STR = os.getenv("ADMIN_IDS", "5298223577")
+ADMINS = [int(admin_id.strip()) for admin_id in ADMINS_STR.split(",") if admin_id.strip().isdigit()]
 
 # ================= CHANNEL SETUP =================
 FORCE_SUB_CHANNELS = [-1002302092974, -1003208417224, -1003549158411]
@@ -61,8 +39,6 @@ CATEGORY_CHANNELS = {
 }
 CHANNEL_JOIN_PLAN = []
 DEFAULT_CHANNEL = -1002539932770
-LOG_CHANNEL_ID = -1002686058050
-ADMINS = [5298223577]
 
 # ================= BOT SETTINGS =================
 TRIAL_HOURS = 24
@@ -101,9 +77,40 @@ async def check_user_membership(bot, user_id, channels):
             if member.status not in ["member", "administrator", "creator"]:
                 return False
         except Exception as e:
-            logging.error(f"Membership error: {e}")
+            logger.error(f"Membership error: {e}")
             return False
     return True
+
+# ================= DATABASE SETUP =================
+# MongoDB Atlas connection with proper configuration
+client = AsyncIOMotorClient(
+    MONGO_URI,
+    tls=True,  # Enable TLS/SSL for Atlas
+    tlsAllowInvalidCertificates=False,  # For security
+    connectTimeoutMS=30000,
+    socketTimeoutMS=30000,
+    serverSelectionTimeoutMS=30000
+)
+
+# Database and collections
+db = client["telegram_bot_db"]
+users_col = db["users"]
+media_col = db["media"]
+
+# Test connection
+async def test_mongodb_connection():
+    try:
+        await client.admin.command('ping')
+        logger.info("✅ MongoDB Connection Successful!")
+        # Create indexes for better performance
+        await users_col.create_index("_id")
+        await users_col.create_index("plan")
+        await users_col.create_index("expires")
+        await media_col.create_index("channel_id")
+        logger.info("✅ Database indexes created!")
+    except Exception as e:
+        logger.error(f"❌ MongoDB Connection Failed: {e}")
+        exit(1)
 
 # ================= KEYBOARDS =================
 
@@ -302,7 +309,7 @@ async def send_media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         })
         asyncio.create_task(auto_delete(context, query.from_user.id, sent.message_id))
     except Exception as e:
-        logging.error(f"Send error: {e}")
+        logger.error(f"Send error: {e}")
 
 async def auto_delete(context, chat_id, mid):
     await asyncio.sleep(600)
