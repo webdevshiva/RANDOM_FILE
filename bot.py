@@ -17,7 +17,7 @@ from telegram.ext import (
 
 # ================= CONFIGURATION =================
 BOT_TOKEN = "8198318399:AAEK3qvRpSr6EqKldxBXnlDfcsjhUdWPPhU"
-MONGO_URI = "mongodb+srv://tommjerry8619_db_user:2gtghZ1wsMnzGYPj@cluster0.o6drjs0.mongodb.net/telegram_bot_db?retryWrites=true&w=majority&appName=Cluster0"
+MONGO_URI = "mongodb+srv://baleny:zpQKH66B4AaYldIx@cluster0.ichdp1p.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
 
 if not BOT_TOKEN:
     print("❌ ERROR: BOT_TOKEN not set!")
