@@ -332,20 +332,36 @@ async def callback_dispatcher(update: Update, context: ContextTypes.DEFAULT_TYPE
         user_data = await user_manager.get_user(update.callback_query.from_user.id)
         await update.callback_query.message.edit_text(f"✨ Welcome back {user_data['name']}!", reply_markup=get_main_keyboard())
 
+# ================= MAIN FUNCTION =================
+
 def main():
-    # Test MongoDB connection before starting bot
-    asyncio.run(test_mongodb_connection())
+    """Main entry point"""
+    # Create a new event loop for the main thread
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
     
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start", start_command))
-    app.add_handler(CallbackQueryHandler(callback_dispatcher))
+    # Run MongoDB connection test
+    loop.run_until_complete(test_mongodb_connection())
+    
+    # Build and configure application
+    application = ApplicationBuilder().token(BOT_TOKEN).build()
+    
+    # Add handlers
+    application.add_handler(CommandHandler("start", start_command))
+    application.add_handler(CallbackQueryHandler(callback_dispatcher))
     
     # Media Auto-save from channels
     all_cids = list(set(list(CATEGORY_CHANNELS.values()) + [DEFAULT_CHANNEL]))
-    app.add_handler(MessageHandler(filters.Chat(chat_id=all_cids) & (filters.PHOTO | filters.VIDEO), save_media_handler))
+    application.add_handler(MessageHandler(filters.Chat(chat_id=all_cids) & (filters.PHOTO | filters.VIDEO), save_media_handler))
     
-    print("🚀 Bot is running with MongoDB Atlas...")
-    app.run_polling()
+    logger.info("🚀 Bot is running with MongoDB Atlas...")
+    
+    # Run the bot
+    application.run_polling(
+        drop_pending_updates=True,
+        allowed_updates=Update.ALL_TYPES,
+        close_loop=False  # Important: don't close our custom loop
+    )
 
 if __name__ == "__main__":
     main()
