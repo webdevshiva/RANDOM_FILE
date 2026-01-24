@@ -19,7 +19,7 @@ from telegram.ext import (
 # ================= LOGGING SETUP =================
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.DEBUG  # Changed to DEBUG for more info
+    level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
@@ -31,8 +31,30 @@ LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID", "-1002686058050"))
 ADMINS_STR = os.getenv("ADMIN_IDS", "5298223577")
 ADMINS = [int(admin_id.strip()) for admin_id in ADMINS_STR.split(",") if admin_id.strip().isdigit()]
 
-logger.info(f"Admin IDs loaded: {ADMINS}")
-logger.info(f"Bot Token: {BOT_TOKEN[:10]}...")  # Log first 10 chars only for security
+# ================= CHANNEL SETUP =================
+FORCE_SUB_CHANNELS = [-1002302092974, -1003208417224, -1003549158411]
+CATEGORY_CHANNELS = {
+    "🎬 All ": -1003549767561,
+}
+CHANNEL_JOIN_PLAN = []
+DEFAULT_CHANNEL = -1002539932770
+
+# ================= BOT SETTINGS =================
+TRIAL_HOURS = 24
+REFERRAL_REQUIREMENT = 1
+MAX_DAILY_VIDEOS_TRIAL = 10
+MAX_DAILY_VIDEOS_PREMIUM = 1000
+MAX_DAILY_VIDEOS_EXTRA_TRIAL = 15
+
+CAPTION_TEXT = (
+    "ⓘ 𝙏𝙝𝙞𝙨 𝙢𝙚𝙙𝙞𝙖 𝙬𝙞𝙡𝙡 𝙗𝙚 𝙖𝙪𝙩𝙤𝙢𝙖𝙩𝙞𝙘𝙖𝙡𝙡𝙮 𝙙𝙚𝙡𝙚𝙩𝙚𝙙 𝙖𝙛𝙩𝙚𝙧 10 𝙢𝙞𝙣𝙪𝙩𝙚𝙨.\n"
+    "𝙋𝙡𝙚𝙖𝙨𝙚 𝙗𝙤𝙤𝙠𝙢𝙖𝙧𝙠 𝙤𝙧 𝙙𝙤𝙬𝙣𝙡𝙤𝙖𝙙 𝙞𝙛 𝙮𝙤𝙪 𝙬𝙖𝙣𝙩 𝙩𝙤 𝙬𝙖𝙩𝙘𝙝 𝙡𝙖𝙩𝙚𝙧.\n\n\n"
+    "━━━━━━━━━━━━━━━\n"
+    "🤖 𝙈𝙤𝙫𝙞𝙚 𝘽𝙤𝙤𝙩 : @ChaudharyAutoFilterbot\n"
+    "📢 𝘽𝙖𝙘𝙠𝙪𝙥 𝘾𝙝𝙖𝙣𝙣𝙚𝙡 : @cinewood_flix\n"
+    "🔒 𝙋𝙧𝙞𝙫𝙖𝙩𝙚 𝘾𝙝𝙖𝙣𝙣𝙚𝙡 : https://t.me/+IKEPBquEvmc0ODhl\n"
+    "━━━━━━━━━━━━━━━"
+)
 
 # ================= DATABASE SETUP =================
 client = AsyncIOMotorClient(
@@ -47,507 +69,828 @@ client = AsyncIOMotorClient(
 db = client["telegram_bot_db"]
 users_col = db["users"]
 media_col = db["media"]
-indexing_col = db["indexing_status"]
 
-# ================= SIMPLIFIED INDEXING =================
+# ================= UTILITY FUNCTIONS =================
 
-class IndexingStatus:
-    def __init__(self, user_id: int, channel_id: int, total_messages: int):
-        self.user_id = user_id
-        self.channel_id = channel_id
-        self.total_messages = total_messages
-        self.indexed = 0
-        self.duplicates = 0
-        self.failed = 0
-        self.start_time = datetime.now()
-        self.current_message_id = None
-        self.is_running = True
+def now():
+    return datetime.now()
 
-# ================= ADMIN COMMANDS =================
+def format_datetime(dt_str):
+    if isinstance(dt_str, str):
+        dt = datetime.fromisoformat(dt_str)
+    else:
+        dt = dt_str
+    return dt.strftime("%d/%m/%Y, %I:%M %p")
 
-async def index_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Start indexing process - SIMPLIFIED VERSION"""
-    user_id = update.effective_user.id
-    logger.info(f"/index command received from user: {user_id}")
+async def check_user_membership(bot, user_id, channels):
+    """Check if user is member of required channels"""
+    if not channels: 
+        return True
+    for channel_id in channels:
+        try:
+            member = await bot.get_chat_member(channel_id, user_id)
+            if member.status not in ["member", "administrator", "creator"]:
+                return False
+        except Exception as e:
+            logger.error(f"Membership error: {e}")
+            return False
+    return True
+
+# ================= KEYBOARDS =================
+
+def get_main_keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("▶ Start Browsing", callback_data="send_media")],
+        [InlineKeyboardButton("📊 My Status", callback_data="status")],
+        [InlineKeyboardButton("💎 Plans", callback_data="plans")],
+        [InlineKeyboardButton("🔄 Change Category", callback_data="change_category")]
+    ])
+
+def get_media_keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("👍 Like", callback_data="like"), 
+         InlineKeyboardButton("👎 Dislike", callback_data="dislike")],
+        [InlineKeyboardButton("⬇ Download", callback_data="download"), 
+         InlineKeyboardButton("⭐ Bookmark", callback_data="bookmark")],
+        [InlineKeyboardButton("⏮ Previous", callback_data="previous"), 
+         InlineKeyboardButton("⏭ Next", callback_data="next")],
+        [InlineKeyboardButton("🔄 Change Category", callback_data="change_category"), 
+         InlineKeyboardButton("❌ Close", callback_data="close")]
+    ])
+
+def get_plans_keyboard():
+    buttons = [[InlineKeyboardButton("💰 Paid Plan", callback_data="plan_paid")],
+               [InlineKeyboardButton("🔗 Referral Plan", callback_data="plan_referral")]]
+    if CHANNEL_JOIN_PLAN:
+        buttons.append([InlineKeyboardButton("📢 Channel Join Plan", callback_data="plan_channel")])
+    buttons.append([InlineKeyboardButton("🔙 Back to Menu", callback_data="back_to_menu")])
+    return InlineKeyboardMarkup(buttons)
+
+def get_category_keyboard():
+    buttons = []
+    for category in CATEGORY_CHANNELS.keys():
+        buttons.append([InlineKeyboardButton(f"{category}", callback_data=f"set_category_{category}")])
+    buttons.append([InlineKeyboardButton("🔙 Back to Menu", callback_data="back_to_menu")])
+    return InlineKeyboardMarkup(buttons)
+
+def get_admin_keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📤 Index Channel", callback_data="admin_index")],
+        [InlineKeyboardButton("📊 Bot Stats", callback_data="admin_stats")],
+        [InlineKeyboardButton("🔙 Main Menu", callback_data="back_to_menu")]
+    ])
+
+# ================= USER MANAGER =================
+
+class UserManager:
+    async def get_user(self, user_id):
+        return await users_col.find_one({"_id": str(user_id)})
+
+    async def create_user(self, user_id, name):
+        expiry = now() + timedelta(hours=TRIAL_HOURS)
+        default_cat = list(CATEGORY_CHANNELS.keys())[0] if CATEGORY_CHANNELS else "🎬 All "
+        user_data = {
+            "_id": str(user_id),
+            "name": name,
+            "plan": "trial",
+            "expires": expiry.isoformat(),
+            "referrals": 0,
+            "daily_videos": 0,
+            "daily_downloads": 0,
+            "category_changes": 0,
+            "searches": 0,
+            "bookmarks": [],
+            "current_category": default_cat,
+            "last_sent_media": [],
+            "last_activity": now().isoformat(),
+            "joined_date": now().isoformat(),
+            "extra_trial_given": False
+        }
+        await users_col.update_one({"_id": str(user_id)}, {"$set": user_data}, upsert=True)
+        return user_data
+
+    async def update_user(self, user_id, updates):
+        updates["last_activity"] = now().isoformat()
+        await users_col.update_one({"_id": str(user_id)}, {"$set": updates})
+
+    async def add_referral(self, referrer_id):
+        referrer = await self.get_user(referrer_id)
+        if referrer:
+            new_refs = referrer.get("referrals", 0) + 1
+            upd = {"referrals": new_refs}
+            if new_refs >= REFERRAL_REQUIREMENT and not referrer.get("extra_trial_given", False):
+                new_exp = datetime.fromisoformat(referrer["expires"]) + timedelta(days=1)
+                upd.update({"expires": new_exp.isoformat(), "extra_trial_given": True, "plan": "extra_trial"})
+            await self.update_user(referrer_id, upd)
+
+    async def is_premium(self, user_id):
+        user = await self.get_user(user_id)
+        if not user: 
+            return False
+        return datetime.fromisoformat(user["expires"]) > now()
+
+    async def reset_daily_counts(self):
+        """Reset daily counts for all users (run daily)"""
+        await users_col.update_many(
+            {},
+            {"$set": {"daily_videos": 0, "daily_downloads": 0}}
+        )
+
+# ================= MEDIA MANAGER =================
+
+class MediaManager:
+    async def add_media(self, channel_id, message_id):
+        await media_col.update_one(
+            {"channel_id": str(channel_id)},
+            {"$addToSet": {"message_ids": message_id}},
+            upsert=True
+        )
+
+    async def get_intelligent_media(self, channel_id, user_last_seen_ids=None):
+        doc = await media_col.find_one({"channel_id": str(channel_id)})
+        if not doc or not doc.get("message_ids"): 
+            return None
+        
+        all_ids = doc["message_ids"]
+        if not user_last_seen_ids: 
+            return random.choice(all_ids)
+        
+        unseen = [m for m in all_ids if m not in user_last_seen_ids[-50:]]
+        if unseen: 
+            return random.choice(unseen)
+        
+        avoid_recent = set(user_last_seen_ids[-10:])
+        available = [m for m in all_ids if m not in avoid_recent]
+        return random.choice(available) if available else random.choice(all_ids)
+
+    async def get_media_count(self, channel_id=None):
+        if channel_id:
+            doc = await media_col.find_one({"channel_id": str(channel_id)})
+            return len(doc.get("message_ids", [])) if doc else 0
+        else:
+            total = 0
+            async for doc in media_col.find():
+                total += len(doc.get("message_ids", []))
+            return total
+
+    async def index_single_message(self, bot, channel_id: int, message_id: int) -> bool:
+        """Index a single message"""
+        try:
+            # Check if already exists
+            existing = await media_col.find_one({
+                "channel_id": str(channel_id),
+                "message_ids": message_id
+            })
+            
+            if existing:
+                return False  # Duplicate
+            
+            # Get message
+            message = await bot.get_message(channel_id, message_id)
+            
+            # Check if it has media
+            if message.photo or message.video or message.document or message.audio:
+                # Add to database
+                await media_col.update_one(
+                    {"channel_id": str(channel_id)},
+                    {"$addToSet": {"message_ids": message_id}},
+                    upsert=True
+                )
+                return True
+            
+            return False
+            
+        except Exception as e:
+            logger.error(f"Failed to index message {message_id}: {e}")
+            return False
+
+# ================= INITIALIZE MANAGERS =================
+
+user_manager = UserManager()
+media_manager = MediaManager()
+
+# ================= MAIN BOT FEATURES =================
+
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Start command - Main feature"""
+    user = update.effective_user
     
-    # Check if user is admin
-    if user_id not in ADMINS:
-        logger.warning(f"User {user_id} tried to use /index but is not admin")
-        await update.message.reply_text("❌ You are not authorized to use this command!")
-        return ConversationHandler.END
+    # Check force subscription
+    if FORCE_SUB_CHANNELS:
+        if not await check_user_membership(context.bot, user.id, FORCE_SUB_CHANNELS):
+            buttons = []
+            for cid in FORCE_SUB_CHANNELS:
+                try:
+                    chat = await context.bot.get_chat(cid)
+                    buttons.append([InlineKeyboardButton(f"🔔 Join {chat.title}", 
+                                                       url=chat.invite_link or await chat.export_invite_link())])
+                except: 
+                    continue
+            buttons.append([InlineKeyboardButton("✅ I've Joined", callback_data="check_join")])
+            await update.message.reply_text(
+                "❗ Join our channels to use the bot:", 
+                reply_markup=InlineKeyboardMarkup(buttons)
+            )
+            return
+
+    # Get or create user
+    user_data = await user_manager.get_user(user.id)
+    if not user_data:
+        if update.message.text and "ref_" in update.message.text:
+            ref_id = update.message.text.split("ref_")[1]
+            if ref_id != str(user.id): 
+                await user_manager.add_referral(ref_id)
+        user_data = await user_manager.create_user(user.id, user.full_name)
+        await context.bot.send_message(
+            LOG_CHANNEL_ID, 
+            f"🆕 New User: {user.full_name} ({user.id})"
+        )
+
+    # Send welcome message
+    text = (
+        f"✨ Welcome {user_data['name']}!\n\n"
+        f"📁 Category: {user_data['current_category']}\n"
+        f"🎁 Plan: {user_data['plan'].title()}\n"
+        f"⏳ Trial Expires: {format_datetime(user_data['expires'])}"
+    )
     
-    logger.info(f"User {user_id} is admin, proceeding with indexing")
+    keyboard = get_main_keyboard()
+    if user.id in ADMINS:
+        # Add admin button for admins
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("▶ Start Browsing", callback_data="send_media")],
+            [InlineKeyboardButton("📊 My Status", callback_data="status")],
+            [InlineKeyboardButton("⚙️ Admin Panel", callback_data="admin_panel")],
+            [InlineKeyboardButton("🔄 Change Category", callback_data="change_category")]
+        ])
     
-    # Send initial response
-    await update.message.reply_text(
+    await update.message.reply_text(text, reply_markup=keyboard)
+
+async def send_media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Send media to user - MAIN FEATURE"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_data = await user_manager.get_user(query.from_user.id)
+
+    # Check premium status
+    if not await user_manager.is_premium(query.from_user.id):
+        await query.message.reply_text(
+            "❌ Trial Expired!\n\n"
+            "Upgrade your plan to continue watching.",
+            reply_markup=get_plans_keyboard()
+        )
+        return
+
+    # Daily Limit Logic
+    plan = user_data.get("plan", "trial")
+    if plan == "premium":
+        limit = MAX_DAILY_VIDEOS_PREMIUM
+    elif plan == "extra_trial":
+        limit = MAX_DAILY_VIDEOS_EXTRA_TRIAL
+    else:
+        limit = MAX_DAILY_VIDEOS_TRIAL
+    
+    if user_data.get("daily_videos", 0) >= limit:
+        await query.message.reply_text(
+            f"📊 Daily Limit ({limit}) Reached!\n\n"
+            f"Come back tomorrow or upgrade your plan.",
+            reply_markup=get_plans_keyboard()
+        )
+        return
+
+    # Get category and channel
+    cat = user_data.get("current_category", "🎬 All ")
+    cid = CATEGORY_CHANNELS.get(cat, DEFAULT_CHANNEL)
+    
+    # Get media
+    mid = await media_manager.get_intelligent_media(cid, user_data.get("last_sent_media", []))
+    if not mid:
+        await query.message.reply_text("📭 No media found in this category.")
+        return
+
+    try:
+        # Send media with caption
+        sent = await context.bot.copy_message(
+            chat_id=query.from_user.id,
+            from_chat_id=cid,
+            message_id=mid,
+            caption=CAPTION_TEXT + f"\n\n🎬 Category: {cat}",
+            reply_markup=get_media_keyboard()
+        )
+        
+        # Update user stats
+        last_sent = user_data.get("last_sent_media", [])
+        last_sent.append(mid)
+        await user_manager.update_user(query.from_user.id, {
+            "daily_videos": user_data.get("daily_videos", 0) + 1,
+            "last_sent_media": last_sent[-100:]  # Keep last 100
+        })
+        
+        # Auto delete after 10 minutes
+        asyncio.create_task(auto_delete(context, query.from_user.id, sent.message_id))
+        
+    except Exception as e:
+        logger.error(f"Send error: {e}")
+        await query.message.reply_text("❌ Error sending media. Please try again.")
+
+async def auto_delete(context, chat_id, mid):
+    """Auto delete media after 10 minutes"""
+    await asyncio.sleep(600)  # 10 minutes
+    try: 
+        await context.bot.delete_message(chat_id, mid)
+    except: 
+        pass
+
+async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """User status"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_data = await user_manager.get_user(query.from_user.id)
+    
+    expiry = datetime.fromisoformat(user_data["expires"])
+    total_media = await media_manager.get_media_count()
+    
+    status_text = (
+        f"📊 <b>My Status</b>\n\n"
+        f"👤 {user_data['name']}\n"
+        f"🎁 Plan: {user_data['plan'].title()}\n"
+        f"⏳ Expires: {format_datetime(expiry)}\n"
+        f"🎬 Category: {user_data['current_category']}\n"
+        f"✅ Watched Today: {user_data.get('daily_videos', 0)}\n"
+        f"📥 Downloads Today: {user_data.get('daily_downloads', 0)}\n"
+        f"🔗 Referrals: {user_data['referrals']}\n"
+        f"📁 Total Media in Bot: {total_media}"
+    )
+    
+    await query.message.edit_text(status_text, reply_markup=get_main_keyboard(), parse_mode="HTML")
+
+async def change_category_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Change media category"""
+    query = update.callback_query
+    await query.answer()
+    
+    if query.data == "change_category":
+        await query.message.edit_text("🎬 Select a Category:", reply_markup=get_category_keyboard())
+    elif query.data.startswith("set_category_"):
+        cat = query.data.replace("set_category_", "")
+        await user_manager.update_user(query.from_user.id, {"current_category": cat})
+        await query.message.edit_text(f"✅ Category set to: {cat}", reply_markup=get_main_keyboard())
+
+async def callback_dispatcher(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle callback queries"""
+    data = update.callback_query.data
+    await update.callback_query.answer()
+    
+    if data == "status":
+        await status_command(update, context)
+    elif data == "send_media":
+        await send_media_handler(update, context)
+    elif data == "change_category" or data.startswith("set_category_"):
+        await change_category_handler(update, context)
+    elif data == "back_to_menu":
+        user_data = await user_manager.get_user(update.callback_query.from_user.id)
+        await update.callback_query.message.edit_text(
+            f"✨ Welcome back {user_data['name']}!",
+            reply_markup=get_main_keyboard()
+        )
+    elif data == "admin_panel":
+        await admin_panel(update, context)
+    elif data == "check_join":
+        await check_join_callback(update, context)
+
+async def check_join_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Check if user joined channels"""
+    query = update.callback_query
+    await query.answer()
+    
+    if await check_user_membership(context.bot, query.from_user.id, FORCE_SUB_CHANNELS):
+        await query.message.edit_text(
+            "✅ Verified! You can now use the bot.",
+            reply_markup=get_main_keyboard()
+        )
+    else:
+        await query.answer("❌ Please join all required channels first!", show_alert=True)
+
+async def save_media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Auto-save media from channels"""
+    if update.channel_post and (update.channel_post.photo or update.channel_post.video):
+        await media_manager.add_media(
+            update.channel_post.chat_id, 
+            update.channel_post.message_id
+        )
+
+# ================= ADMIN FEATURES =================
+
+async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin panel"""
+    query = update.callback_query
+    await query.answer()
+    
+    if query.from_user.id not in ADMINS:
+        await query.message.edit_text("❌ Access Denied!")
+        return
+    
+    await query.message.edit_text(
+        "⚙️ <b>Admin Panel</b>\n\n"
+        "Select an option:",
+        reply_markup=get_admin_keyboard(),
+        parse_mode="HTML"
+    )
+
+async def admin_index_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Index channel media - ADMIN ONLY"""
+    query = update.callback_query
+    await query.answer()
+    
+    if query.from_user.id not in ADMINS:
+        await query.message.edit_text("❌ Access Denied!")
+        return
+    
+    await query.message.edit_text(
         "📤 <b>Index Channel Media</b>\n\n"
-        "Please send me:\n"
-        "1. The channel invite link (e.g., https://t.me/channel_name)\n"
-        "OR\n"
-        "2. A forwarded message from the channel\n"
-        "OR\n"
-        "3. Channel ID (e.g., -1001234567890)\n\n"
-        "<i>The bot must be admin in the channel!</i>",
+        "Please send:\n"
+        "1. Channel link (t.me/channel)\n"
+        "2. Channel message link (t.me/channel/message_id)\n"
+        "3. Channel ID (-100...)\n\n"
+        "<i>Bot must be admin in the channel!</i>\n\n"
+        "Type /cancel to cancel.",
         parse_mode="HTML"
     )
     
-    # Return state to continue conversation
-    return "GET_CHANNEL_INFO"
+    return "ADMIN_GET_CHANNEL"
 
-async def handle_channel_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle channel information from user"""
+async def admin_handle_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle channel input for indexing"""
     user_id = update.effective_user.id
-    message = update.message
+    text = update.message.text
     
-    logger.info(f"Received channel info from user {user_id}: {message.text or 'Forwarded message'}")
-    
-    channel_id = None
-    channel_title = "Unknown"
+    if user_id not in ADMINS:
+        await update.message.reply_text("❌ Access Denied!")
+        return ConversationHandler.END
     
     try:
-        # Case 1: Forwarded message from channel
-        if message.forward_from_chat:
-            channel_id = message.forward_from_chat.id
-            channel_title = message.forward_from_chat.title
-            logger.info(f"Got channel from forwarded message: {channel_title} ({channel_id})")
+        # Extract message ID if present
+        message_id = None
+        channel_link = text
         
-        # Case 2: Channel link
-        elif message.text and ("t.me/" in message.text or "telegram.me/" in message.text):
-            # Extract username from link
-            link = message.text
-            if "t.me/" in link:
-                username = link.split("t.me/")[-1].split("/")[0].replace("@", "").strip()
-            else:
-                username = link.split("telegram.me/")[-1].split("/")[0].replace("@", "").strip()
-            
-            logger.info(f"Extracted username from link: @{username}")
-            
-            try:
-                # Get chat info
-                chat = await context.bot.get_chat(f"@{username}")
-                channel_id = chat.id
-                channel_title = chat.title
-                logger.info(f"Got channel info: {channel_title} ({channel_id})")
-            except Exception as e:
-                logger.error(f"Failed to get chat info: {e}")
-                await message.reply_text(
-                    f"❌ Could not find channel @{username}. Please make sure:\n"
-                    f"1. Channel exists\n"
-                    f"2. Bot is in the channel\n"
-                    f"3. Username is correct"
-                )
-                return "GET_CHANNEL_INFO"
+        if "/" in text and text.count("/") >= 2:
+            parts = text.strip("/").split("/")
+            if parts[-1].isdigit():
+                message_id = int(parts[-1])
+                channel_link = "/".join(parts[:-1])  # Remove message ID from link
         
-        # Case 3: Direct channel ID
-        elif message.text and message.text.startswith("-100"):
-            try:
-                channel_id = int(message.text)
-                # Try to get channel info
-                chat = await context.bot.get_chat(channel_id)
-                channel_title = chat.title
-                logger.info(f"Got channel from ID: {channel_title} ({channel_id})")
-            except Exception as e:
-                logger.error(f"Invalid channel ID: {e}")
-                await message.reply_text("❌ Invalid channel ID or bot cannot access this channel")
-                return "GET_CHANNEL_INFO"
-        
-        # Invalid input
+        # Extract channel username/ID
+        if "t.me/" in channel_link:
+            username = channel_link.split("t.me/")[-1].replace("@", "").strip()
         else:
-            await message.reply_text(
-                "❌ Please send:\n"
-                "1. Channel link (t.me/...)\n"
-                "2. Forwarded message from channel\n"
-                "3. Channel ID (-100...)"
-            )
-            return "GET_CHANNEL_INFO"
+            username = channel_link.replace("@", "").strip()
         
-        # Check if bot is admin in channel
+        # Get chat info
         try:
-            chat_member = await context.bot.get_chat_member(channel_id, context.bot.id)
-            is_admin = chat_member.status in ['administrator', 'creator']
-            
-            if not is_admin:
-                logger.warning(f"Bot is not admin in channel {channel_id}")
-                await message.reply_text(
-                    f"❌ Bot is not admin in '{channel_title}'!\n\n"
-                    f"Please make the bot an admin with the following permissions:\n"
-                    f"✅ Post Messages\n"
-                    f"✅ Edit Messages\n"
-                    f"✅ Delete Messages\n"
-                    f"✅ View Messages"
-                )
-                return ConversationHandler.END
-                
-            logger.info(f"Bot is admin in channel {channel_id}")
-            
+            if username.startswith("-100"):
+                chat = await context.bot.get_chat(int(username))
+            else:
+                chat = await context.bot.get_chat(f"@{username}")
         except Exception as e:
-            logger.error(f"Admin check failed: {e}")
-            await message.reply_text(
-                f"❌ Cannot check admin status: {str(e)}\n"
-                f"Make sure bot is added to the channel."
-            )
+            await update.message.reply_text(f"❌ Cannot access channel: {str(e)}")
             return ConversationHandler.END
         
-        # Get message count
+        channel_id = chat.id
+        channel_title = chat.title
+        
+        # Check if bot is admin
         try:
-            # Get last message
-            last_message = None
-            async for msg in context.bot.get_chat_history(channel_id, limit=1):
-                last_message = msg
-                break
-            
-            if not last_message:
-                await message.reply_text("❌ No messages found in this channel!")
+            chat_member = await context.bot.get_chat_member(channel_id, context.bot.id)
+            if chat_member.status not in ['administrator', 'creator']:
+                await update.message.reply_text(
+                    f"❌ Bot is not admin in '{channel_title}'!\n"
+                    f"Please add bot as admin first."
+                )
                 return ConversationHandler.END
-            
-            last_msg_id = last_message.message_id
-            logger.info(f"Last message ID in channel: {last_msg_id}")
-            
-            # Ask for start message ID
-            context.user_data['index_channel_id'] = channel_id
-            context.user_data['index_channel_title'] = channel_title
-            context.user_data['last_msg_id'] = last_msg_id
-            
-            keyboard = [
-                [InlineKeyboardButton("Start from Message 1", callback_data=f"startid_1")],
-                [InlineKeyboardButton(f"Start from Message {max(1, last_msg_id-1000)}", callback_data=f"startid_{max(1, last_msg_id-1000)}")],
-                [InlineKeyboardButton("Custom Start ID", callback_data="custom_start")]
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            
-            await message.reply_text(
-                f"📊 <b>Channel Ready for Indexing</b>\n\n"
+        except Exception as e:
+            await update.message.reply_text(f"❌ Cannot check admin status: {str(e)}")
+            return ConversationHandler.END
+        
+        # If single message ID provided
+        if message_id:
+            await update.message.reply_text(
+                f"📌 <b>Indexing Single Message</b>\n\n"
                 f"📢 Channel: {channel_title}\n"
-                f"🆔 ID: <code>{channel_id}</code>\n"
-                f"📈 Last Message ID: {last_msg_id}\n"
-                f"🗂️ Estimated Messages: {last_msg_id}\n\n"
-                f"<b>Select starting point:</b>",
-                reply_markup=reply_markup,
+                f"🆔 Message ID: {message_id}\n\n"
+                f"<i>Processing...</i>",
                 parse_mode="HTML"
             )
             
-            return "GET_START_ID"
+            success = await media_manager.index_single_message(context.bot, channel_id, message_id)
             
-        except Exception as e:
-            logger.error(f"Failed to get message count: {e}")
-            await message.reply_text(f"❌ Failed to get channel messages: {str(e)}")
+            if success:
+                await update.message.reply_text("✅ Message indexed successfully!")
+            else:
+                await update.message.reply_text("⚠️ Message already indexed or no media found.")
+            
             return ConversationHandler.END
         
-    except Exception as e:
-        logger.error(f"Error in handle_channel_info: {e}")
-        await message.reply_text(f"❌ Error: {str(e)}")
-        return ConversationHandler.END
-
-async def handle_start_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle start ID selection"""
-    query = update.callback_query
-    await query.answer()
-    
-    if query.data == "custom_start":
-        await query.message.reply_text("Please send the starting message ID (usually 1):")
-        context.user_data['awaiting_custom_id'] = True
-        return "GET_CUSTOM_ID"
-    
-    elif query.data.startswith("startid_"):
-        start_id = int(query.data.split("_")[1])
-        await process_start_id(update, context, start_id)
-        return ConversationHandler.END
-    
-    return ConversationHandler.END
-
-async def handle_custom_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle custom start ID input"""
-    try:
-        start_id = int(update.message.text)
-        await process_start_id(update, context, start_id)
-        return ConversationHandler.END
-    except ValueError:
-        await update.message.reply_text("❌ Please enter a valid number!")
-        return "GET_CUSTOM_ID"
-
-async def process_start_id(update, context, start_id):
-    """Process the selected start ID"""
-    channel_id = context.user_data['index_channel_id']
-    channel_title = context.user_data['index_channel_title']
-    last_msg_id = context.user_data['last_msg_id']
-    
-    if start_id < 1:
-        start_id = 1
-    if start_id > last_msg_id:
-        start_id = last_msg_id
-    
-    total_messages = last_msg_id - start_id + 1
-    
-    # Confirmation keyboard
-    keyboard = [
-        [
-            InlineKeyboardButton("✅ Start Indexing", callback_data=f"start_index_{channel_id}_{start_id}_{last_msg_id}"),
-            InlineKeyboardButton("❌ Cancel", callback_data="cancel_index")
+        # Ask for range
+        keyboard = [
+            [
+                InlineKeyboardButton("Last 50 Messages", callback_data=f"admin_range_{channel_id}_50"),
+                InlineKeyboardButton("Last 100 Messages", callback_data=f"admin_range_{channel_id}_100")
+            ],
+            [
+                InlineKeyboardButton("Last 500 Messages", callback_data=f"admin_range_{channel_id}_500"),
+                InlineKeyboardButton("Custom Range", callback_data=f"admin_custom_{channel_id}")
+            ],
+            [InlineKeyboardButton("❌ Cancel", callback_data="admin_cancel")]
         ]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    if hasattr(update, 'callback_query'):
-        message = update.callback_query.message
-        await message.edit_text(
-            f"📋 <b>Ready to Index</b>\n\n"
-            f"📢 Channel: {channel_title}\n"
-            f"🆔 ID: <code>{channel_id}</code>\n"
-            f"🎯 Range: {start_id} → {last_msg_id}\n"
-            f"📈 Total Messages: {total_messages}\n\n"
-            f"<i>This may take some time...</i>\n\n"
-            f"<b>Click Start Indexing to begin:</b>",
-            reply_markup=reply_markup,
-            parse_mode="HTML"
-        )
-    else:
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
         await update.message.reply_text(
-            f"📋 <b>Ready to Index</b>\n\n"
+            f"📊 <b>Select Range to Index</b>\n\n"
             f"📢 Channel: {channel_title}\n"
-            f"🆔 ID: <code>{channel_id}</code>\n"
-            f"🎯 Range: {start_id} → {last_msg_id}\n"
-            f"📈 Total Messages: {total_messages}\n\n"
-            f"<i>This may take some time...</i>\n\n"
-            f"<b>Click Start Indexing to begin:</b>",
+            f"🆔 ID: <code>{channel_id}</code>\n\n"
+            f"<i>How many recent messages to index?</i>",
             reply_markup=reply_markup,
             parse_mode="HTML"
         )
+        
+        return ConversationHandler.END
+        
+    except Exception as e:
+        logger.error(f"Admin indexing error: {e}")
+        await update.message.reply_text(f"❌ Error: {str(e)}")
+        return ConversationHandler.END
 
-async def start_indexing_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Start the indexing process"""
+async def admin_handle_range(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle range selection for indexing"""
     query = update.callback_query
     await query.answer()
     
-    if query.data == "cancel_index":
+    if query.data == "admin_cancel":
         await query.message.edit_text("❌ Indexing cancelled!")
         return
     
-    if query.data.startswith("start_index_"):
+    if query.data.startswith("admin_range_"):
         try:
-            # Parse data
+            # Parse: admin_range_CHANNELID_COUNT
             parts = query.data.split("_")
             channel_id = int(parts[2])
-            start_id = int(parts[3])
-            end_id = int(parts[4])
+            count = int(parts[3])
             
-            user_id = query.from_user.id
+            # For now, we'll use a simple approach
+            # Start indexing from a high message ID backwards
+            start_msg = 1000
+            end_msg = max(1, start_msg - count + 1)
             
             await query.message.edit_text(
-                f"🚀 <b>Indexing Started!</b>\n\n"
-                f"⏳ Please wait...\n"
-                f"I'll send progress updates here.\n\n"
-                f"<i>Processing {end_id - start_id + 1} messages...</i>",
+                f"🚀 <b>Indexing Started</b>\n\n"
+                f"⏳ Indexing {count} messages...\n"
+                f"<i>This may take a while. I'll notify when done.</i>",
                 parse_mode="HTML"
             )
             
             # Start indexing in background
             asyncio.create_task(
-                simple_index_media(
-                    context.bot,
-                    channel_id,
-                    start_id,
-                    end_id,
-                    user_id,
-                    query.message.message_id
-                )
+                admin_index_messages(context.bot, channel_id, end_msg, start_msg, query.from_user.id)
             )
             
         except Exception as e:
-            logger.error(f"Failed to start indexing: {e}")
-            await query.message.edit_text(f"❌ Failed to start indexing: {str(e)}")
+            logger.error(f"Range error: {e}")
+            await query.message.edit_text(f"❌ Error: {str(e)}")
+    
+    elif query.data.startswith("admin_custom_"):
+        channel_id = int(query.data.split("_")[2])
+        context.user_data['admin_custom_channel'] = channel_id
+        await query.message.edit_text(
+            "🔢 <b>Enter Custom Range</b>\n\n"
+            "Format: <code>start_id-end_id</code>\n"
+            "Example: <code>1-100</code>\n\n"
+            "Type /cancel to cancel.",
+            parse_mode="HTML"
+        )
+        return "ADMIN_GET_CUSTOM_RANGE"
 
-async def simple_index_media(bot, channel_id, start_id, end_id, user_id, status_msg_id):
-    """Simple media indexing function"""
+async def admin_handle_custom_range(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle custom range input"""
+    user_id = update.effective_user.id
+    text = update.message.text
+    
+    if user_id not in ADMINS:
+        await update.message.reply_text("❌ Access Denied!")
+        return ConversationHandler.END
+    
     try:
-        indexed = 0
-        duplicates = 0
-        failed = 0
+        if "-" in text:
+            start_id, end_id = map(int, text.split("-"))
+        else:
+            end_id = int(text)
+            start_id = 1
         
-        # Send initial status
-        status_msg = await bot.send_message(
-            user_id,
-            f"📊 <b>Indexing Started</b>\n\n"
-            f"✅ Indexed: 0\n"
-            f"🔄 Duplicates: 0\n"
-            f"❌ Failed: 0\n"
-            f"📈 Progress: 0%\n"
-            f"⏳ Current: Message {start_id}",
+        channel_id = context.user_data.get('admin_custom_channel')
+        
+        if start_id > end_id:
+            start_id, end_id = end_id, start_id
+        
+        count = end_id - start_id + 1
+        
+        await update.message.reply_text(
+            f"🚀 <b>Indexing Started</b>\n\n"
+            f"⏳ Indexing {count} messages ({start_id} to {end_id})...\n"
+            f"<i>This may take a while. I'll notify when done.</i>",
             parse_mode="HTML"
         )
         
-        total_messages = end_id - start_id + 1
-        current_id = start_id
+        # Start indexing
+        asyncio.create_task(
+            admin_index_messages(context.bot, channel_id, start_id, end_id, user_id)
+        )
         
-        while current_id <= end_id:
+        return ConversationHandler.END
+        
+    except Exception as e:
+        await update.message.reply_text(f"❌ Invalid format or error: {str(e)}")
+        return "ADMIN_GET_CUSTOM_RANGE"
+
+async def admin_index_messages(bot, channel_id, start_id, end_id, user_id):
+    """Background task to index messages"""
+    indexed = 0
+    duplicates = 0
+    failed = 0
+    
+    current = start_id
+    
+    try:
+        while current <= end_id:
             try:
-                # Check if message exists and has media
-                message = await bot.get_message(channel_id, current_id)
-                
-                if message.photo or message.video or message.document or message.audio:
-                    # Check if already in database
-                    existing = await media_col.find_one({
-                        "channel_id": str(channel_id),
-                        "message_ids": current_id
-                    })
-                    
-                    if existing:
-                        duplicates += 1
-                    else:
-                        # Add to database
-                        await media_col.update_one(
-                            {"channel_id": str(channel_id)},
-                            {"$addToSet": {"message_ids": current_id}},
-                            upsert=True
-                        )
-                        indexed += 1
-                
-                # Update progress every 50 messages
-                if indexed % 50 == 0:
-                    progress = (current_id - start_id + 1) / total_messages * 100
-                    await status_msg.edit_text(
+                success = await media_manager.index_single_message(bot, channel_id, current)
+                if success:
+                    indexed += 1
+                else:
+                    duplicates += 1
+            except:
+                failed += 1
+            
+            current += 1
+            
+            # Update progress every 50 messages
+            if indexed % 50 == 0:
+                progress = (current - start_id) / (end_id - start_id + 1) * 100
+                try:
+                    await bot.send_message(
+                        user_id,
                         f"📊 <b>Indexing Progress</b>\n\n"
                         f"✅ Indexed: {indexed}\n"
                         f"🔄 Duplicates: {duplicates}\n"
                         f"❌ Failed: {failed}\n"
-                        f"📈 Progress: {progress:.1f}%\n"
-                        f"⏳ Current: Message {current_id}/{end_id}",
+                        f"📈 Progress: {progress:.1f}%",
                         parse_mode="HTML"
                     )
-                
-            except Exception as e:
-                failed += 1
-                logger.debug(f"Failed message {current_id}: {e}")
+                except:
+                    pass
             
-            current_id += 1
-            
-            # Small delay to avoid rate limits
-            await asyncio.sleep(0.05)
+            await asyncio.sleep(0.05)  # Rate limiting
         
-        # Send completion message
+        # Send final report
         await bot.send_message(
             user_id,
             f"✅ <b>Indexing Completed!</b>\n\n"
             f"📊 <b>Summary:</b>\n"
-            f"✅ Indexed: {indexed}\n"
+            f"✅ Successfully Indexed: {indexed}\n"
             f"🔄 Duplicates Skipped: {duplicates}\n"
             f"❌ Failed: {failed}\n"
-            f"🎯 Total Messages: {total_messages}\n\n"
-            f"📁 Channel ID: <code>{channel_id}</code>",
+            f"🎯 Total Processed: {end_id - start_id + 1}\n"
+            f"📈 Success Rate: {(indexed/(end_id - start_id + 1)*100):.1f}%",
             parse_mode="HTML"
         )
         
-        # Delete status message
-        try:
-            await status_msg.delete()
-        except:
-            pass
-        
     except Exception as e:
-        logger.error(f"Indexing error: {e}")
+        logger.error(f"Background indexing error: {e}")
         await bot.send_message(user_id, f"❌ Indexing failed: {str(e)}")
 
-# ================= BASIC BOT FUNCTIONS =================
-
-async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Simple start command"""
-    await update.message.reply_text(
-        "🤖 <b>Media Bot</b>\n\n"
-        "Use /index to index channels (Admin only)\n"
-        "Use /status to check bot status",
-        parse_mode="HTML"
-    )
-
-async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Check bot status"""
+async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show bot statistics"""
+    query = update.callback_query
+    await query.answer()
+    
+    if query.from_user.id not in ADMINS:
+        await query.message.edit_text("❌ Access Denied!")
+        return
+    
     try:
-        # Get media count
+        # Get total media count
         total_media = 0
+        channel_counts = []
         async for doc in media_col.find():
-            total_media += len(doc.get("message_ids", []))
+            count = len(doc.get("message_ids", []))
+            total_media += count
+            channel_counts.append(f"{doc['channel_id']}: {count}")
         
         # Get user count
         user_count = await users_col.count_documents({})
         
-        await update.message.reply_text(
-            f"📊 <b>Bot Status</b>\n\n"
-            f"🤖 Bot: Running\n"
-            f"📁 Total Media: {total_media}\n"
+        # Get active users (last 24 hours)
+        day_ago = (now() - timedelta(hours=24)).isoformat()
+        active_users = await users_col.count_documents({
+            "last_activity": {"$gte": day_ago}
+        })
+        
+        stats_text = (
+            f"📊 <b>Bot Statistics</b>\n\n"
+            f"🤖 Bot Status: ✅ Running\n"
             f"👥 Total Users: {user_count}\n"
-            f"🕐 Time: {datetime.now().strftime('%H:%M:%S')}",
-            parse_mode="HTML"
+            f"📈 Active Users (24h): {active_users}\n"
+            f"📁 Total Media Files: {total_media}\n"
+            f"📢 Indexed Channels: {len(channel_counts)}\n\n"
+            f"<b>Channel-wise Media Count:</b>\n"
         )
+        
+        for i, count in enumerate(channel_counts[:10], 1):  # Show first 10
+            stats_text += f"{i}. {count}\n"
+        
+        if len(channel_counts) > 10:
+            stats_text += f"\n... and {len(channel_counts) - 10} more channels"
+        
+        await query.message.edit_text(stats_text, parse_mode="HTML", reply_markup=get_admin_keyboard())
+        
     except Exception as e:
-        logger.error(f"Status error: {e}")
-        await update.message.reply_text(f"❌ Error getting status: {str(e)}")
+        logger.error(f"Stats error: {e}")
+        await query.message.edit_text(f"❌ Error getting stats: {str(e)}")
 
-async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Cancel any ongoing operation"""
-    await update.message.reply_text("Operation cancelled!")
+async def admin_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Cancel admin operation"""
+    await update.message.reply_text("✅ Operation cancelled!")
     return ConversationHandler.END
 
-# ================= CONVERSATION HANDLER =================
+# ================= CONVERSATION HANDLERS =================
 
-INDEX_CONVERSATION = ConversationHandler(
-    entry_points=[CommandHandler("index", index_command)],
+ADMIN_INDEX_CONVERSATION = ConversationHandler(
+    entry_points=[CallbackQueryHandler(admin_index_channel, pattern="^admin_index$")],
     states={
-        "GET_CHANNEL_INFO": [
-            MessageHandler(
-                filters.TEXT | filters.FORWARDED,
-                handle_channel_info
-            )
+        "ADMIN_GET_CHANNEL": [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, admin_handle_channel)
         ],
-        "GET_START_ID": [
-            CallbackQueryHandler(handle_start_id, pattern="^(startid_|custom_start)")
-        ],
-        "GET_CUSTOM_ID": [
-            MessageHandler(filters.TEXT & ~filters.COMMAND, handle_custom_id)
+        "ADMIN_GET_CUSTOM_RANGE": [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, admin_handle_custom_range)
         ]
     },
     fallbacks=[
-        CommandHandler("cancel", cancel_command)
-    ]
+        CommandHandler("cancel", admin_cancel)
+    ],
+    map_to_parent={
+        ConversationHandler.END: ConversationHandler.END
+    }
 )
 
 # ================= MAIN FUNCTION =================
 
-async def init_bot():
-    """Initialize bot components"""
-    logger.info("Initializing bot...")
-    
-    # Test MongoDB connection
+async def init_database():
+    """Initialize database"""
     try:
         await client.admin.command('ping')
         logger.info("✅ MongoDB Connected")
-    except Exception as e:
-        logger.error(f"❌ MongoDB Connection Failed: {e}")
-        raise
-    
-    # Create indexes
-    try:
+        
+        # Create indexes
+        await users_col.create_index("_id")
+        await users_col.create_index("last_activity")
         await media_col.create_index("channel_id")
         logger.info("✅ Database indexes created")
+        
     except Exception as e:
-        logger.error(f"❌ Index creation failed: {e}")
+        logger.error(f"❌ Database error: {e}")
+        raise
 
 def main():
-    """Main entry point"""
+    """Main function"""
     # Create event loop
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     
-    # Initialize bot
-    loop.run_until_complete(init_bot())
+    # Initialize database
+    loop.run_until_complete(init_database())
     
     # Build application
     application = ApplicationBuilder().token(BOT_TOKEN).build()
     
-    # Add handlers
+    # Add handlers - MAIN FEATURES FIRST
     application.add_handler(CommandHandler("start", start_command))
-    application.add_handler(CommandHandler("status", status_command))
-    application.add_handler(INDEX_CONVERSATION)
-    application.add_handler(CallbackQueryHandler(start_indexing_callback, pattern="^(start_index_|cancel_index)"))
+    application.add_handler(CallbackQueryHandler(callback_dispatcher))
     
-    logger.info("🚀 Bot starting...")
+    # Admin handlers
+    application.add_handler(ADMIN_INDEX_CONVERSATION)
+    application.add_handler(CallbackQueryHandler(admin_stats, pattern="^admin_stats$"))
+    application.add_handler(CallbackQueryHandler(admin_handle_range, pattern="^admin_"))
+    
+    # Auto-save media from channels
+    all_cids = list(set(list(CATEGORY_CHANNELS.values()) + [DEFAULT_CHANNEL]))
+    application.add_handler(
+        MessageHandler(
+            filters.Chat(chat_id=all_cids) & (filters.PHOTO | filters.VIDEO),
+            save_media_handler
+        )
+    )
+    
+    logger.info("🚀 Bot starting with both features...")
     
     # Run bot
     application.run_polling(
