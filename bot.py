@@ -2,7 +2,7 @@ import os
 import random
 import asyncio
 import logging
-import pytz # Required for IST time
+import pytz
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -27,19 +27,16 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ================= CONFIGURATION =================
-# RENDER ENV VARIABLES
 BOT_TOKEN = os.getenv("BOT_TOKEN", "8198318399:AAEK3qvRpSr6EqKldxBXnlDfcsjhUdWPPhU")
 MONGO_URI = os.getenv("MONGO_URI", "mongodb+srv://baleny:zpQKH66B4AaYldIx@cluster0.ichdp1p.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0")
 LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID", "-1002686058050"))
 PORT = int(os.getenv("PORT", "8080"))
 
-# ADMIN & PAYMENT INFO
 ADMINS_STR = os.getenv("ADMIN_IDS", "5298223577")
 ADMINS = [int(x.strip()) for x in ADMINS_STR.split(",") if x.strip().isdigit()]
 
 OWNER_USERNAME = os.getenv("OWNER_USERNAME", "cinewood_flix") 
-UPI_ID = os.getenv("UPI_ID", "your-upi@paytm") # CHANGE THIS
-# REPLACE THIS WITH YOUR IMAGE URL
+UPI_ID = os.getenv("UPI_ID", "your-upi@paytm") 
 PLAN_IMG_URL = "https://i.ibb.co/wznc5g3/premium-banner.jpg" 
 
 # ================= CHANNEL SETUP =================
@@ -53,7 +50,7 @@ DEFAULT_CHANNEL = -1002539932770
 IST = pytz.timezone('Asia/Kolkata')
 TRIAL_HOURS = 24
 REFERRAL_REQUIREMENT = 3 
-MAX_DAILY_VIDEOS_FREE = 5  # CHANGED TO 5
+MAX_DAILY_VIDEOS_FREE = 5 
 MAX_DAILY_VIDEOS_PREMIUM = 100
 
 CAPTION_TEXT = (
@@ -67,12 +64,11 @@ CAPTION_TEXT = (
 )
 
 # ================= DATABASE SETUP =================
+# Fixed Client for Motor 2.5.1
 client = AsyncIOMotorClient(
     MONGO_URI,
     tls=True,
-    tlsAllowInvalidCertificates=False,
-    connectTimeoutMS=30000,
-    socketTimeoutMS=30000
+    tlsAllowInvalidCertificates=False
 )
 
 db = client["telegram_bot_db"]
@@ -92,13 +88,11 @@ def format_datetime(dt_str):
             dt = datetime.now()
     else:
         dt = dt_str
-    # Convert to IST for display if naive
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=IST)
     return dt.strftime("%d/%m/%Y, %I:%M %p")
 
 async def send_log(bot, log_type, user, additional_text=""):
-    """Helper to send formatted logs"""
     if log_type == "NEW_USER":
         text = (
             "#NewUser\n\n"
@@ -155,7 +149,6 @@ def get_media_keyboard():
     ])
 
 def get_plans_keyboard():
-    # 1, 2, 3 Month buttons + Free Plan + Back
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("1 Month - ₹50", callback_data="pay_1"),
          InlineKeyboardButton("2 Months - ₹90", callback_data="pay_2")],
@@ -192,8 +185,7 @@ class UserManager:
         return await users_col.find_one({"_id": str(user_id)})
 
     async def create_user(self, user_id, name):
-        # Default Plan: Trial/Free
-        expiry = get_ist_now() # Expired immediately so they are on Free plan logic
+        expiry = get_ist_now()
         default_cat = list(CATEGORY_CHANNELS.keys())[0] if CATEGORY_CHANNELS else "🎬 All "
         user_data = {
             "_id": str(user_id),
@@ -215,14 +207,13 @@ class UserManager:
         await users_col.update_one({"_id": str(user_id)}, {"$set": updates})
 
     async def check_reset_daily(self, user_id, user_data):
-        """Reset count if day changed in IST"""
         today_str = get_ist_now().strftime("%Y-%m-%d")
         if user_data.get("last_reset_date") != today_str:
             await users_col.update_one(
                 {"_id": str(user_id)}, 
                 {"$set": {"daily_videos": 0, "last_reset_date": today_str}}
             )
-            return True # Reset happened
+            return True
         return False
 
     async def add_referral(self, referrer_id):
@@ -233,11 +224,10 @@ class UserManager:
             if new_refs % REFERRAL_REQUIREMENT == 0:
                 try:
                     current_exp = datetime.fromisoformat(referrer["expires"])
-                    # If expired, start from now
                     if current_exp < get_ist_now().replace(tzinfo=None): 
                         current_exp = get_ist_now().replace(tzinfo=None)
                     new_exp = current_exp + timedelta(days=1)
-                    upd.update({"expires": new_exp.isoformat(), "plan": "premium"}) # Give premium features
+                    upd.update({"expires": new_exp.isoformat(), "plan": "premium"})
                 except: pass
             await self.update_user(referrer_id, upd)
 
@@ -246,7 +236,6 @@ class UserManager:
         if not user: return False
         try:
             exp = datetime.fromisoformat(user["expires"])
-            # Handle naive datetime
             if exp.tzinfo is None: exp = exp.replace(tzinfo=IST)
             return exp > get_ist_now()
         except: return False
@@ -313,7 +302,6 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     args = context.args
     
-    # Referral Logic
     if args and args[0].startswith("ref_"):
         ref_id = args[0].split("ref_")[1]
         if ref_id != str(user.id): await user_manager.add_referral(ref_id)
@@ -321,7 +309,6 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_data = await user_manager.get_user(user.id)
     if not user_data:
         user_data = await user_manager.create_user(user.id, user.full_name)
-        # LOG NEW USER
         await send_log(context.bot, "NEW_USER", user)
 
     if not await check_user_membership(context.bot, user.id, FORCE_SUB_CHANNELS):
@@ -358,17 +345,15 @@ async def send_media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
     user_data = await user_manager.get_user(user_id)
     
-    # Check 12 AM Reset
     if await user_manager.check_reset_daily(user_id, user_data):
-        user_data = await user_manager.get_user(user_id) # Reload
+        user_data = await user_manager.get_user(user_id) 
 
-    # Limit Logic
     is_premium = await user_manager.is_premium(user_id)
     limit = MAX_DAILY_VIDEOS_PREMIUM if is_premium else MAX_DAILY_VIDEOS_FREE
     
     if user_data.get("daily_videos", 0) >= limit:
         msg = f"📊 <b>Daily Limit Reached!</b>\n\nFree User Limit: {MAX_DAILY_VIDEOS_FREE} videos/day.\nResets at 12:00 AM IST.\n\n👇 Buy Premium for 100 videos/day!"
-        markup = get_plans_keyboard() # Direct to plans
+        markup = get_plans_keyboard()
         if update.callback_query: 
             await query.message.reply_text(msg, reply_markup=markup, parse_mode="HTML")
             await query.answer()
@@ -413,7 +398,6 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = query.from_user
     user_data = await user_manager.get_user(user.id)
     
-    # Check reset before showing status
     if await user_manager.check_reset_daily(user.id, user_data):
         user_data = await user_manager.get_user(user.id)
 
@@ -439,7 +423,6 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ================= PLAN & PAYMENT HANDLERS =================
 
 async def plans_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show Image + Plans"""
     query = update.callback_query
     await query.answer()
     
@@ -452,7 +435,6 @@ async def plans_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "👇 <b>Select a plan:</b>"
     )
     
-    # If already a photo, edit caption, else delete and send photo
     if query.message.photo:
         await query.message.edit_caption(caption=caption, reply_markup=get_plans_keyboard(), parse_mode="HTML")
     else:
@@ -466,7 +448,6 @@ async def plans_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 async def handle_payment_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle 1,2,3 month clicks"""
     query = update.callback_query
     data = query.data
     
@@ -490,8 +471,6 @@ async def handle_payment_selection(update: Update, context: ContextTypes.DEFAULT
     
     await query.message.edit_caption(caption=caption, reply_markup=get_payment_keyboard(), parse_mode="HTML")
 
-# --- PROOF SUBMISSION CONVERSATION ---
-
 async def proof_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -502,7 +481,6 @@ async def proof_receive(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     photo = update.message.photo[-1].file_id
     
-    # Send to Log Channel
     caption = f"Plan Request\nUser ID: `{user.id}`"
     try:
         await context.bot.send_photo(
@@ -534,14 +512,12 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("❌ Admins Only!", show_alert=True)
         return
     
-    # Clean up photo if coming from plans
     if query.message.photo:
         await query.message.delete()
         await context.bot.send_message(query.from_user.id, "⚙️ <b>Admin Panel</b>", reply_markup=get_admin_keyboard(), parse_mode="HTML")
     else:
         await query.message.edit_text("⚙️ <b>Admin Panel</b>", reply_markup=get_admin_keyboard(), parse_mode="HTML")
 
-# Add Premium Conversation
 async def admin_premium_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     if query.from_user.id not in ADMINS: return ConversationHandler.END
@@ -569,7 +545,6 @@ async def admin_premium_get_days(update: Update, context: ContextTypes.DEFAULT_T
         await update.message.reply_text("❌ Invalid days.")
         return "GET_DAYS"
 
-# Indexing Conversation
 async def admin_index_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     if query.from_user.id not in ADMINS: return ConversationHandler.END
@@ -626,9 +601,9 @@ async def callback_dispatcher(update: Update, context: ContextTypes.DEFAULT_TYPE
     user_id = update.callback_query.from_user.id
     
     if data == "status":
-        if update.callback_query.message.photo: # Clean up photo if switching from plans
+        if update.callback_query.message.photo: 
             await update.callback_query.message.delete()
-            await status_command(update, context) # Will send new text
+            await status_command(update, context) 
         else:
             await status_command(update, context)
             
@@ -666,7 +641,6 @@ async def callback_dispatcher(update: Update, context: ContextTypes.DEFAULT_TYPE
             f"Invite {REFERRAL_REQUIREMENT} friends = 1 Day Premium!\n"
             f"Your stats: { (await user_manager.get_user(user_id)).get('referrals',0) } invites"
         )
-        # Edit caption if photo exists
         if update.callback_query.message.photo:
             await update.callback_query.message.edit_caption(caption=caption, reply_markup=get_plans_keyboard(), parse_mode="HTML")
         else:
@@ -709,14 +683,12 @@ async def post_init(app: Application):
     await web_start()
     try: 
         await client.admin.command('ping')
-        # Notify Admin Log Channel that Bot is UP
         await app.bot.send_message(LOG_CHANNEL_ID, "🟢 <b>Bot Restarted & Online</b>", parse_mode="HTML")
     except Exception as e: logger.error(e)
 
 def main():
     app = ApplicationBuilder().token(BOT_TOKEN).post_init(post_init).build()
     
-    # Conversations
     app.add_handler(ConversationHandler(
         entry_points=[CallbackQueryHandler(proof_start, pattern="^submit_proof$")],
         states={"WAITING_PROOF": [MessageHandler(filters.PHOTO, proof_receive)]},
