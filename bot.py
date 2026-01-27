@@ -37,7 +37,7 @@ ADMINS = [int(x.strip()) for x in ADMINS_STR.split(",") if x.strip().isdigit()]
 
 OWNER_USERNAME = os.getenv("OWNER_USERNAME", "cinewood_flix") 
 UPI_ID = os.getenv("UPI_ID", "your-upi@paytm") 
-PLAN_IMG_URL = "https://i.ibb.co/wznc5g3/premium-banner.jpg" 
+PLAN_IMG_URL = "https://graph.org/file/56b5deb73f3b132e2bb73.jpg" 
 
 # ================= CHANNEL SETUP =================
 FORCE_SUB_CHANNELS = [-1002302092974, -1003208417224, -1003549158411]
