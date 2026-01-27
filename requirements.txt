@@ -1,6 +1,6 @@
-python-telegram-bot[job-queue]==20.7
-motor==3.3.2
-pymongo[srv]==4.6.0
-python-dotenv==1.0.0
+python-telegram-bot==20.7
+motor==2.5.1
+pymongo==3.12.3
+dnspython==2.4.2
 aiohttp==3.9.1
 pytz==2023.3.post1
