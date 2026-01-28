@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 # ================= CONFIGURATION =================
 BOT_TOKEN = os.getenv("BOT_TOKEN", "8198318399:AAEK3qvRpSr6EqKldxBXnlDfcsjhUdWPPhU")
-MONGO_URI = os.getenv("MONGO_URI", "mongodb+srv://tommjerry8619_db_user:2gtghZ1wsMnzGYPj@cluster0.o6drjs0.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0")
+MONGO_URI = os.getenv("MONGO_URI", "mongodb+srv://himeh97761_db_user:YKewBYdTMMXrCisP@cluster0.1hidep8.mongodb.net/?appName=Cluster0")
 LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID", "-1002686058050"))
 PORT = int(os.getenv("PORT", "8080"))
 
