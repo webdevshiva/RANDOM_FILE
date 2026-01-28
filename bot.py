@@ -42,7 +42,7 @@ PLAN_IMG_URL = "https://graph.org/file/56b5deb73f3b132e2bb73.jpg"
 # ================= CHANNEL SETUP =================
 FORCE_SUB_CHANNELS = [-1002302092974, -1003208417224, -1003549158411]
 CATEGORY_CHANNELS = {
-    "🎬 All ": -1003549767561,
+    "🎬 All ": -1003822965491,
 }
 DEFAULT_CHANNEL = -1002539932770
 
